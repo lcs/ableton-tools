@@ -4,7 +4,7 @@ Python Control Surface scripts for Ableton Live 12 that run as background listen
 
 ## AutoSlotSelector
 
-Select a track whose name starts with `•` (Option-8) and the first empty clip slot on that track becomes the highlighted slot, ready for the transport Record button. If a grid controller is running (Push, Launchpad, Move), its session ring scrolls just enough to show that slot — top row if the slot was above the ring, bottom row if below, untouched if already visible. Tracks without the bullet are left alone. Return, master and group tracks are skipped.
+Select a track whose name **ends** with `•` (Option-8) and the first empty clip slot on that track becomes the highlighted slot, ready for the transport Record button. The sentinel is the last character so Live's first-character conveniences keep working: `# Bass •` still displays its track number. If a grid controller is running (Push, Launchpad, Move), its session ring scrolls just enough to show that slot — top row if the slot was above the ring, bottom row if below, untouched if already visible. Tracks without the bullet are left alone. Return, master and group tracks are skipped.
 
 ### Install
 

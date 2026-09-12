@@ -42,7 +42,7 @@ for name, mod in [("ableton", pkg), ("ableton.v2", v2), ("ableton.v2.control_sur
     sys.modules[name] = mod
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from AutoSlotSelector.AutoSlotSelector import AutoSlotSelector, SENTINEL_PREFIX  # noqa: E402
+from AutoSlotSelector.AutoSlotSelector import AutoSlotSelector, SENTINEL  # noqa: E402
 
 
 # ---- stub song objects ------------------------------------------------------------
@@ -111,7 +111,7 @@ def fire(s):
 
 class Tests(unittest.TestCase):
     def test_bullet_track_highlights_first_empty_slot(self):
-        s, c = make(Track(SENTINEL_PREFIX + " Bass", [True, True, False, False]))
+        s, c = make(Track("Bass " + SENTINEL, [True, True, False, False]))
         self.assertEqual(fire(s), 1)
         self.assertIs(c._song.view.highlighted_clip_slot, c._song.view.selected_track.clip_slots[2])
         self.assertIn("-> slot 3", c.lines[-1])
@@ -121,24 +121,34 @@ class Tests(unittest.TestCase):
         fire(s)
         self.assertIsNone(c._song.view.highlighted_clip_slot)
 
-    def test_leading_spaces_before_bullet_still_match(self):
-        s, c = make(Track("  " + SENTINEL_PREFIX + "Keys", [False]))
+    def test_trailing_spaces_after_bullet_still_match(self):
+        s, c = make(Track("Keys" + SENTINEL + "  ", [False]))
         fire(s)
         self.assertIsNotNone(c._song.view.highlighted_clip_slot)
 
+    def test_leading_bullet_no_longer_matches(self):
+        s, c = make(Track(SENTINEL + " Keys", [False]))
+        fire(s)
+        self.assertIsNone(c._song.view.highlighted_clip_slot)
+
+    def test_hash_prefix_track_with_trailing_bullet_matches(self):
+        s, c = make(Track("# Bass " + SENTINEL, [True, False]))
+        fire(s)
+        self.assertIs(c._song.view.highlighted_clip_slot, c._song.view.selected_track.clip_slots[1])
+
     def test_full_track_logs_and_does_nothing(self):
-        s, c = make(Track(SENTINEL_PREFIX + " Full", [True, True]))
+        s, c = make(Track("Full " + SENTINEL, [True, True]))
         fire(s)
         self.assertIsNone(c._song.view.highlighted_clip_slot)
         self.assertIn("no empty slot", c.lines[-1])
 
     def test_group_and_return_tracks_skipped(self):
-        for t in (Track(SENTINEL_PREFIX + " Group", [False], foldable=True), Track(SENTINEL_PREFIX + " Return", [])):
+        for t in (Track("Group " + SENTINEL, [False], foldable=True), Track("Return " + SENTINEL, [])):
             s, c = make(t); fire(s)
             self.assertIsNone(c._song.view.highlighted_clip_slot)
 
     def test_pending_flag_coalesces_rapid_changes(self):
-        s, c = make(Track(SENTINEL_PREFIX + " A", [False]))
+        s, c = make(Track("A " + SENTINEL, [False]))
         s._on_selected_track_changed(); s._on_selected_track_changed()
         self.assertEqual(len(s.scheduled), 1)
         s.scheduled[-1][1]()
@@ -147,38 +157,38 @@ class Tests(unittest.TestCase):
 
     def test_ring_scrolls_down_just_enough(self):
         ring = Ring(top=0)
-        s, c = make(Track(SENTINEL_PREFIX + " A", [True] * 11 + [False]), ring)  # target scene index 11
+        s, c = make(Track("A " + SENTINEL, [True] * 11 + [False]), ring)  # target scene index 11
         fire(s)
         self.assertEqual(ring.calls, [(3, 4)])  # scenes 5-12 visible, target on the bottom row
 
     def test_ring_scrolls_up_just_enough(self):
         ring = Ring(top=6)
-        s, c = make(Track(SENTINEL_PREFIX + " A", [True, False]), ring)  # target scene index 1
+        s, c = make(Track("A " + SENTINEL, [True, False]), ring)  # target scene index 1
         fire(s)
         self.assertEqual(ring.calls, [(3, 1)])
 
     def test_ring_untouched_when_target_visible(self):
         ring = Ring(top=2)
-        s, c = make(Track(SENTINEL_PREFIX + " A", [True] * 5 + [False]), ring)  # index 5, ring 2-9
+        s, c = make(Track("A " + SENTINEL, [True] * 5 + [False]), ring)  # index 5, ring 2-9
         fire(s)
         self.assertEqual(ring.calls, [])
 
     def test_no_controller_is_a_clean_no_op(self):
-        s, c = make(Track(SENTINEL_PREFIX + " A", [False]))
+        s, c = make(Track("A " + SENTINEL, [False]))
         fire(s)
         self.assertFalse(any("ring" in l for l in c.lines))
 
     def test_ring_of_four_rows_uses_its_own_height(self):
         ring = Ring(top=0, height=4)
-        s, c = make(Track(SENTINEL_PREFIX + " A", [True] * 6 + [False]), ring)  # index 6
+        s, c = make(Track("A " + SENTINEL, [True] * 6 + [False]), ring)  # index 6
         fire(s)
         self.assertEqual(ring.calls, [(3, 3)])  # scenes 4-7
 
     def test_exception_inside_handler_is_logged_not_raised(self):
-        s, c = make(Track(SENTINEL_PREFIX + " A", [False]))
+        s, c = make(Track("A " + SENTINEL, [False]))
         c._song.view.selected_track = None
         s._on_selected_track_changed(); s.scheduled[-1][1]()  # None track: early return, no log line needed
-        broken = Track(SENTINEL_PREFIX + " B", [False]); del broken.clip_slots
+        broken = Track("B " + SENTINEL, [False]); del broken.clip_slots
         c._song.view.selected_track = broken
         s._on_selected_track_changed(); s.scheduled[-1][1]()
         self.assertIn("AttributeError", c.lines[-1])

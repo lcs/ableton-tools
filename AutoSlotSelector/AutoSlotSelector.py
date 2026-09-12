@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """AutoSlotSelector — a background Control Surface script for Ableton Live 12.
 
-When the selected track changes to a track whose name starts with the bullet
+When the selected track changes to a track whose name ends with the bullet
 sentinel (•, Option-8 on macOS), highlight that track's first empty clip slot.
+The sentinel is the last character, not the first, so Live's own first-character
+conveniences (a leading "#" becomes the track number) keep working.
 If a grid controller (Push, Launchpad, Move) is running, scroll its session
 ring just enough to bring that slot into view. Runs with Input/Output = None;
 no MIDI hardware is required, and a missing controller is a silent no-op.
@@ -19,7 +21,7 @@ from ableton.v2.control_surface.control_surface import get_control_surfaces
 
 logger = logging.getLogger(__name__)
 
-SENTINEL_PREFIX = "•"   # • — Option-8 on macOS
+SENTINEL = "•"          # • — Option-8 on macOS; must be the last character of the track name
 DEFER_TICKS = 1              # one ~100 ms tick, so the controller's own selection work settles first
 
 
@@ -66,7 +68,7 @@ class AutoSlotSelector(ControlSurface):
         if not slots or track.is_foldable:
             return  # return/master tracks have no slots; group tracks only have group slots
         name = track.name.strip()
-        if not name.startswith(SENTINEL_PREFIX):
+        if not name.endswith(SENTINEL):
             return
         for index, slot in enumerate(slots):
             if not slot.has_clip:
