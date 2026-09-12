@@ -23,12 +23,22 @@ Everything the script does is written to Live's log:
 tail -f ~/Library/Preferences/Ableton/Live\ 12*/Log.txt | grep -i autoslot
 ```
 
+If a previous version failed to import, Live clears the Control Surface slot: re-select **AutoSlotSelector** in Settings after reinstalling.
+
 On load: `AutoSlotSelector: loaded, listening for track selection`. On selecting a bullet track: one line naming the slot it highlighted and the scene now selected, then one line per controller ring it scrolled. A script that failed to load shows a `RemoteScriptError` traceback in the same file instead.
+
+### Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+Logic only (sentinel, first empty slot, ring math, coalescing, error logging) against a stubbed framework and song. Framework integration is checked by reading Live's installed bytecode; behaviour in Live is checked in Log.txt.
 
 ### Design notes
 
 - **Base class is `ableton.v2.control_surface.ControlSurface`**, which takes `c_instance` as its first argument and needs no hardware specification. The `ableton.v3` `ControlSurface` takes a *specification* first; passing `c_instance` there fails inside the framework before the script exists.
 - **Deferral uses `schedule_message`.** Live drives every loaded script's timer from `update_display` every ~100 ms; a task group of your own is never ticked. `update()` is not a tick, it is a rebuild hook.
-- **Controller rings are found through `get_control_surfaces()`**, the Python-side registry of loaded scripts. `Application.control_surfaces` in the Live Object Model returns proxy objects that carry no Python attributes.
+- **Controller rings are found through `get_control_surfaces()`**, the Python-side registry of loaded scripts, imported from the `control_surface` submodule (the package does not re-export it). `Application.control_surfaces` in the Live Object Model returns proxy objects that carry no Python attributes.
 - **Logging goes through `c_instance.log_message`**, the route every stock script uses, with the `logging` module as fallback.
 - **Selected scene.** In Live the highlighted clip slot sits at the intersection of the selected track and the selected scene, so highlighting a slot in another row moves the scene selection with it. The log line reports the scene after each highlight.
