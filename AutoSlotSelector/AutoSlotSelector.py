@@ -14,7 +14,8 @@ c_instance.log_message route that every stock script uses.
 import logging
 import traceback
 
-from ableton.v2.control_surface import ControlSurface, get_control_surfaces
+from ableton.v2.control_surface import ControlSurface
+from ableton.v2.control_surface.control_surface import get_control_surfaces
 
 logger = logging.getLogger(__name__)
 
