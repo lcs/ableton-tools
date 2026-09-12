@@ -8,7 +8,8 @@ ring just enough to bring that slot into view. Runs with Input/Output = None;
 no MIDI hardware is required, and a missing controller is a silent no-op.
 
 Built on ableton.v2 — the framework Live's own Launchpad scripts use. Every
-message goes to Live's Log.txt, prefixed "AutoSlotSelector:".
+message goes to Live's Log.txt, prefixed "AutoSlotSelector:", through the
+c_instance.log_message route that every stock script uses.
 """
 import logging
 import traceback
@@ -27,7 +28,14 @@ class AutoSlotSelector(ControlSurface):
         super().__init__(c_instance)
         self._pending = False
         self.song.view.add_selected_track_listener(self._on_selected_track_changed)
-        logger.info("AutoSlotSelector: loaded, listening for track selection")
+        self._log("loaded, listening for track selection")
+
+    def _log(self, message, *args):
+        text = "AutoSlotSelector: " + (message % args if args else message)
+        try:
+            self._c_instance.log_message(text)
+        except Exception:
+            logger.info(text)
 
     # -- listener + one-tick deferral -------------------------------------------------
 
@@ -44,7 +52,7 @@ class AutoSlotSelector(ControlSurface):
         try:
             self._select_first_empty_slot()
         except Exception:
-            logger.error("AutoSlotSelector: %s", traceback.format_exc())
+            self._log("%s", traceback.format_exc())
 
     # -- the behaviour --------------------------------------------------------------
 
@@ -63,11 +71,11 @@ class AutoSlotSelector(ControlSurface):
             if not slot.has_clip:
                 break
         else:
-            logger.info("AutoSlotSelector: '%s' has no empty slot", name)
+            self._log("'%s' has no empty slot", name)
             return
         view.highlighted_clip_slot = slot
-        logger.info("AutoSlotSelector: '%s' -> slot %d (selected scene is now %d)",
-                    name, index + 1, self._selected_scene_index() + 1)
+        self._log("'%s' -> slot %d (selected scene is now %d)",
+                  name, index + 1, self._selected_scene_index() + 1)
         self._nudge_session_rings(index)
 
     def _selected_scene_index(self):
@@ -92,11 +100,10 @@ class AutoSlotSelector(ControlSurface):
             try:
                 self._nudge_ring(cs.__class__.__name__, ring, scene_index)
             except Exception:
-                logger.error("AutoSlotSelector: ring nudge on %s failed: %s",
-                             cs.__class__.__name__, traceback.format_exc())
+                self._log("ring nudge on %s failed: %s",
+                          cs.__class__.__name__, traceback.format_exc())
 
-    @staticmethod
-    def _nudge_ring(owner, ring, scene_index):
+    def _nudge_ring(self, owner, ring, scene_index):
         for attr in ("scene_offset", "track_offset", "num_scenes", "set_offsets"):
             if not hasattr(ring, attr):
                 return
@@ -112,12 +119,11 @@ class AutoSlotSelector(ControlSurface):
         else:
             return                               # already in view: leave the ring alone
         ring.set_offsets(ring.track_offset, new_top)
-        logger.info("AutoSlotSelector: %s ring scrolled to scenes %d-%d",
-                    owner, new_top + 1, new_top + height)
+        self._log("%s ring scrolled to scenes %d-%d", owner, new_top + 1, new_top + height)
 
     def disconnect(self):
         view = self.song.view
         if view.selected_track_has_listener(self._on_selected_track_changed):
             view.remove_selected_track_listener(self._on_selected_track_changed)
-        logger.info("AutoSlotSelector: disconnected")
+        self._log("disconnected")
         super().disconnect()
