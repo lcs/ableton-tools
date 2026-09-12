@@ -1,109 +1,123 @@
 # -*- coding: utf-8 -*-
-from ableton.v3.base import task
-from ableton.v3.control_surface import ControlSurface
+"""AutoSlotSelector — a background Control Surface script for Ableton Live 12.
 
-SENTINEL_PREFIX = "•"
-DEFAULT_NUM_SCENES = 8
+When the selected track changes to a track whose name starts with the bullet
+sentinel (•, Option-8 on macOS), highlight that track's first empty clip slot.
+If a grid controller (Push, Launchpad, Move) is running, scroll its session
+ring just enough to bring that slot into view. Runs with Input/Output = None;
+no MIDI hardware is required, and a missing controller is a silent no-op.
+
+Built on ableton.v2 — the framework Live's own Launchpad scripts use. Every
+message goes to Live's Log.txt, prefixed "AutoSlotSelector:".
+"""
+import logging
+import traceback
+
+from ableton.v2.control_surface import ControlSurface, get_control_surfaces
+
+logger = logging.getLogger(__name__)
+
+SENTINEL_PREFIX = "•"   # • — Option-8 on macOS
+DEFER_TICKS = 1              # one ~100 ms tick, so the controller's own selection work settles first
+
 
 class AutoSlotSelector(ControlSurface):
+
     def __init__(self, c_instance):
         super().__init__(c_instance)
-        self._tasks = task.TaskContainer()
-        self._session_ring = None
+        self._pending = False
         self.song.view.add_selected_track_listener(self._on_selected_track_changed)
-        self.log_message("AutoSlotSelector: Initialized and listening for track selection.")
+        logger.info("AutoSlotSelector: loaded, listening for track selection")
 
-    def _get_active_session_ring(self):
-        """Finds any active hardware SessionRingComponent (Push, Launchpad, etc.).
-        Returns None if no supported grid controller is currently attached.
-        """
-        if self._session_ring is not None:
-            return self._session_ring
-
-        for cs in self.application.control_surfaces:
-            if cs and cs is not self:
-                ring = (
-                    getattr(cs, "_session_ring", None)
-                    or getattr(cs, "session_ring", None)
-                    or getattr(cs, "_session_ring_component", None)
-                )
-                if ring and hasattr(ring, "scene_offset") and hasattr(ring, "set_offsets"):
-                    self._session_ring = ring
-                    self.log_message(f"AutoSlotSelector: Attached to session ring on {cs.__class__.__name__}.")
-                    return self._session_ring
-
-        return None
+    # -- listener + one-tick deferral -------------------------------------------------
 
     def _on_selected_track_changed(self):
-        # 2-tick deferral ensures hardware scripts settle their internal view logic first
-        self._tasks.add(
-            task.sequence(
-                task.delay(2),
-                task.run(self._process_track_selection)
-            )
-        )
+        if self._pending:
+            return
+        self._pending = True
+        # schedule_message runs the callback from the framework's timer tick,
+        # which Live drives every ~100 ms for every loaded script.
+        self.schedule_message(DEFER_TICKS, self._process_track_selection)
 
     def _process_track_selection(self):
-        track = self.song.view.selected_track
+        self._pending = False
+        try:
+            self._select_first_empty_slot()
+        except Exception:
+            logger.error("AutoSlotSelector: %s", traceback.format_exc())
 
-        # Skip Master and Return tracks
-        if not hasattr(track, 'clip_slots') or not track.clip_slots:
+    # -- the behaviour --------------------------------------------------------------
+
+    def _select_first_empty_slot(self):
+        view = self.song.view
+        track = view.selected_track
+        if track is None:
             return
-
-        track_name = track.name.strip()
-        if not track_name.startswith(SENTINEL_PREFIX):
+        slots = list(track.clip_slots)
+        if not slots or track.is_foldable:
+            return  # return/master tracks have no slots; group tracks only have group slots
+        name = track.name.strip()
+        if not name.startswith(SENTINEL_PREFIX):
             return
-
-        self.log_message(f"AutoSlotSelector: Processing tagged track '{track_name}'.")
-
-        # Find the first unoccupied slot
-        target_index = None
-        target_slot = None
-        for index, slot in enumerate(track.clip_slots):
+        for index, slot in enumerate(slots):
             if not slot.has_clip:
-                target_index = index
-                target_slot = slot
                 break
-
-        if target_slot is None:
-            self.log_message(f"AutoSlotSelector: No empty slot found on '{track_name}'.")
-            return
-
-        # 1. Update Live's GUI highlighted slot (runs with or without hardware)
-        self.song.view.highlighted_clip_slot = target_slot
-        self.log_message(f"AutoSlotSelector: Highlighted empty slot index {target_index}.")
-
-        # 2. Safely nudge the hardware session ring if present
-        self._nudge_session_ring(target_index)
-
-    def _nudge_session_ring(self, target_scene_index):
-        ring = self._get_active_session_ring()
-        if ring is None:
-            # Running headless / mouse-and-keyboard only
-            return
-
-        current_offset = ring.scene_offset
-        num_scenes = getattr(ring, "num_scenes", DEFAULT_NUM_SCENES)
-        max_visible_scene = current_offset + num_scenes - 1
-
-        if target_scene_index > max_visible_scene:
-            new_offset = target_scene_index - num_scenes + 1
-            ring.set_offsets(ring.track_offset, new_offset)
-            self.log_message(f"AutoSlotSelector: Shifted ring down to scene offset {new_offset}.")
-        elif target_scene_index < current_offset:
-            ring.set_offsets(ring.track_offset, target_scene_index)
-            self.log_message(f"AutoSlotSelector: Shifted ring up to scene offset {target_scene_index}.")
         else:
-            self.log_message(f"AutoSlotSelector: Slot index {target_scene_index} already inside visible ring window [{current_offset}–{max_visible_scene}].")
+            logger.info("AutoSlotSelector: '%s' has no empty slot", name)
+            return
+        view.highlighted_clip_slot = slot
+        logger.info("AutoSlotSelector: '%s' -> slot %d (selected scene is now %d)",
+                    name, index + 1, self._selected_scene_index() + 1)
+        self._nudge_session_rings(index)
 
-    def update(self):
-        super().update()
-        self._tasks.update(0.0)
+    def _selected_scene_index(self):
+        selected = self.song.view.selected_scene
+        for i, scene in enumerate(self.song.scenes):
+            if scene == selected:
+                return i
+        return -1
+
+    # -- session ring, best effort: no controller script = nothing to do --------------
+
+    def _nudge_session_rings(self, scene_index):
+        # get_control_surfaces() is the Python-side registry of loaded scripts.
+        # Push 2/3, the Novation scripts and every ableton.v3 script keep their
+        # ring at `_session_ring`.
+        for cs in get_control_surfaces():
+            if cs is self:
+                continue
+            ring = getattr(cs, "_session_ring", None)
+            if ring is None:
+                continue
+            try:
+                self._nudge_ring(cs.__class__.__name__, ring, scene_index)
+            except Exception:
+                logger.error("AutoSlotSelector: ring nudge on %s failed: %s",
+                             cs.__class__.__name__, traceback.format_exc())
+
+    @staticmethod
+    def _nudge_ring(owner, ring, scene_index):
+        for attr in ("scene_offset", "track_offset", "num_scenes", "set_offsets"):
+            if not hasattr(ring, attr):
+                return
+        height = ring.num_scenes
+        if height <= 0:
+            return
+        top = ring.scene_offset
+        bottom = top + height - 1
+        if scene_index > bottom:
+            new_top = scene_index - height + 1   # target lands on the bottom row
+        elif scene_index < top:
+            new_top = scene_index                # target lands on the top row
+        else:
+            return                               # already in view: leave the ring alone
+        ring.set_offsets(ring.track_offset, new_top)
+        logger.info("AutoSlotSelector: %s ring scrolled to scenes %d-%d",
+                    owner, new_top + 1, new_top + height)
 
     def disconnect(self):
-        if self.song.view.selected_track_has_listener(self._on_selected_track_changed):
-            self.song.view.remove_selected_track_listener(self._on_selected_track_changed)
-        self._tasks.clear()
-        self._session_ring = None
-        self.log_message("AutoSlotSelector: Disconnected.")
+        view = self.song.view
+        if view.selected_track_has_listener(self._on_selected_track_changed):
+            view.remove_selected_track_listener(self._on_selected_track_changed)
+        logger.info("AutoSlotSelector: disconnected")
         super().disconnect()
